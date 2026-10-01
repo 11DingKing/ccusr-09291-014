@@ -52,6 +52,7 @@ def root():
         "api_groups": [
             "志愿者管理 (/api/volunteers)",
             "培训管理 - 期次/课次/报名入班/课次出勤 (/api/trainings/batches, /sessions, /enrollments)",
+            "候补队列 - 优先级依据登记、名额释放一次性递补、通知送达记录、入选/等待理由说明 (/api/trainings/batches/{id}/waitlist, /waitlist/{id}, /batches/{id}/promotions)",
             "考核管理 - 主题/评分项/题库/按项打分/补考/资格证 (/api/assessments/topics, /criteria, /questions, /submit-scores, /retake, /certifications)",
             "讲解时段 (/api/time-slots)",
             "服务记录 - 自动计算积分与星级评定 (/api/service-records)",

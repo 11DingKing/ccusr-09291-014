@@ -3,7 +3,8 @@ from datetime import date, datetime
 from typing import Optional, List
 from models import (
     VolunteerStatus, AssessmentResult, TimeSlotStatus, TrainingBatchStatus, EnrollmentStatus,
-    PointsType, PointsSource, BenefitType, ExchangeStatus
+    PointsType, PointsSource, BenefitType, ExchangeStatus,
+    WaitlistStatus, WaitlistPriorityTier, NotificationResult, PromotionTrigger
 )
 
 
@@ -379,6 +380,8 @@ class TrainingSession(TrainingSessionBase):
 class TrainingBatchDetail(TrainingBatch):
     sessions: List[TrainingSession] = []
     enrollment_count: int = 0
+    waiting_count: int = 0
+    available_seats: int = 0
 
 
 class EnrollmentBase(BaseModel):
@@ -413,6 +416,116 @@ class EnrollmentDetail(Enrollment):
 class BatchEnroll(BaseModel):
     volunteer_ids: List[int]
     batch_id: int
+    # 班额已满时是否自动转入候补队列
+    enqueue_when_full: bool = False
+    priority_tier: int = 3
+    priority_reason: Optional[str] = None
+
+
+class BatchDrop(BaseModel):
+    volunteer_ids: List[int]
+
+
+# ==================== 候补队列 ====================
+
+class WaitlistRegister(BaseModel):
+    batch_id: int
+    volunteer_id: int
+    # 优先级梯队（数字越小越优先）：1=优待对象 2=老学员/已完成讲解服务 3=普通登记
+    priority_tier: int = 3
+    # 工作人员填写的具体依据，如“烈属子女/2025年冬令营老学员/同事推荐”
+    priority_reason: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class WaitlistDecline(BaseModel):
+    reason: Optional[str] = None
+
+
+class WaitlistCancel(BaseModel):
+    reason: Optional[str] = None
+
+
+class WaitlistNotifyResult(BaseModel):
+    # 已送达 / 未送达
+    delivered: bool
+    detail: Optional[str] = None
+
+
+class WaitlistEntry(BaseModel):
+    id: int
+    batch_id: int
+    volunteer_id: int
+    priority_tier: int
+    priority_label: str
+    priority_reason: str
+    seq_no: int
+    status: WaitlistStatus
+    notify_status: NotificationResult
+    notified_at: Optional[datetime] = None
+    notify_detail: Optional[str] = None
+    promotion_id: Optional[int] = None
+    promotion_seq: Optional[int] = None
+    promoted_at: Optional[datetime] = None
+    declined_at: Optional[datetime] = None
+    decline_reason: Optional[str] = None
+    cancelled_at: Optional[datetime] = None
+    cancel_reason: Optional[str] = None
+    registered_at: datetime
+    volunteer: Optional["Volunteer"] = None
+
+    class Config:
+        from_attributes = True
+
+
+class WaitlistQueueItem(WaitlistEntry):
+    # 在当前候补队列中的顺位（1 起）；非候补中为 None
+    queue_position: Optional[int] = None
+    # 接口直接给出的“为何入选 / 为何仍在等待”说明
+    explanation: str = ""
+
+
+class WaitlistPromotion(BaseModel):
+    id: int
+    batch_id: int
+    trigger: PromotionTrigger
+    seats_before: int
+    seats_released: int
+    seats_available: int
+    promoted_count: int
+    detail: Optional[str] = None
+    created_at: datetime
+    entries: List[WaitlistEntry] = []
+
+    class Config:
+        from_attributes = True
+
+
+class WaitlistPromotionItem(BaseModel):
+    waitlist_id: int
+    volunteer_id: int
+    volunteer_name: str
+    promotion_seq: int
+    priority_tier: int
+    priority_label: str
+    notify_status: NotificationResult
+
+
+class WaitlistPromotionResult(BaseModel):
+    batch_id: int
+    trigger: PromotionTrigger
+    seats_before: int
+    seats_released: int
+    seats_available: int
+    promoted_count: int
+    promoted: List[WaitlistPromotionItem]
+    # 本轮仍在候补的人员及等待原因
+    still_waiting: List[WaitlistQueueItem]
+    message: str
+
+
+class CapacityExpand(BaseModel):
+    new_capacity: int
 
 
 class SessionAttendanceBase(BaseModel):

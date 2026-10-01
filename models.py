@@ -33,6 +33,42 @@ class EnrollmentStatus(str, enum.Enum):
     COMPLETED = "已完成培训"
 
 
+class WaitlistStatus(str, enum.Enum):
+    WAITING = "候补中"
+    PROMOTED = "已递补"
+    DECLINED = "已放弃"
+    CANCELLED = "已取消"
+
+
+class WaitlistPriorityTier(int, enum.Enum):
+    # 数字越小越优先；新增梯队只需在此调整，递补顺序自动生效
+    SPECIAL_CARE = 1
+    RETURNING = 2
+    NORMAL = 3
+
+    @property
+    def label(self) -> str:
+        return {
+            WaitlistPriorityTier.SPECIAL_CARE: "优待对象",
+            WaitlistPriorityTier.RETURNING: "老学员/已完成讲解服务",
+            WaitlistPriorityTier.NORMAL: "普通登记",
+        }[self]
+
+
+class NotificationResult(str, enum.Enum):
+    PENDING = "待通知"
+    DELIVERED = "已送达"
+    FAILED = "未送达"
+
+
+class PromotionTrigger(str, enum.Enum):
+    DROP = "学员退班"
+    BATCH_DROP = "多人退班"
+    WAITLIST_DECLINE = "候补放弃"
+    CAPACITY_EXPAND = "临时扩容"
+    MANUAL = "手动递补"
+
+
 class TimeSlotStatus(str, enum.Enum):
     AVAILABLE = "可认领"
     CLAIMED = "已认领"
@@ -122,6 +158,7 @@ class Volunteer(Base):
     points_records = relationship("PointsRecord", back_populates="volunteer")
     benefit_exchanges = relationship("BenefitExchange", back_populates="volunteer")
     star_certificates = relationship("StarCertificate", back_populates="volunteer")
+    waitlist_entries = relationship("WaitlistEntry", back_populates="volunteer")
 
 
 class AssessmentTopic(Base):
@@ -159,6 +196,8 @@ class TrainingBatch(Base):
     sessions = relationship("TrainingSession", back_populates="batch", cascade="all, delete-orphan")
     enrollments = relationship("Enrollment", back_populates="batch", cascade="all, delete-orphan")
     assessments = relationship("Assessment", back_populates="training_batch")
+    waitlist_entries = relationship("WaitlistEntry", back_populates="batch", cascade="all, delete-orphan")
+    promotions = relationship("WaitlistPromotion", back_populates="batch", cascade="all, delete-orphan")
 
 
 class TrainingSession(Base):
@@ -194,6 +233,65 @@ class Enrollment(Base):
     volunteer = relationship("Volunteer", back_populates="enrollments")
     batch = relationship("TrainingBatch", back_populates="enrollments")
     attendances = relationship("SessionAttendance", back_populates="enrollment", cascade="all, delete-orphan")
+
+
+class WaitlistEntry(Base):
+    """培训期次候补登记。
+
+    顺序由 (priority_tier, seq_no) 唯一确定：先按优先级梯队，梯队相同按登记
+    先后（seq_no 为期次内单调递增序号，不受放弃/取消记录影响，保证重新登记
+    必然排到同梯队队尾）。promotion_seq 记录该人在某轮递补中的入选顺位。
+    """
+    __tablename__ = "waitlist_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("training_batches.id"), nullable=False)
+    volunteer_id = Column(Integer, ForeignKey("volunteers.id"), nullable=False)
+    # 优先级梯队（数字越小越优先）与登记时固化的依据说明
+    priority_tier = Column(Integer, nullable=False, default=lambda: WaitlistPriorityTier.NORMAL.value)
+    priority_label = Column(String(50), nullable=False)
+    priority_reason = Column(Text, nullable=False)
+    # 期次内单调递增的登记序号；同优先级先到先得
+    seq_no = Column(Integer, nullable=False)
+    status = Column(SAEnum(WaitlistStatus), nullable=False, default=WaitlistStatus.WAITING)
+    # 通知送达情况
+    notify_status = Column(SAEnum(NotificationResult), nullable=False, default=NotificationResult.PENDING)
+    notified_at = Column(DateTime)
+    notify_detail = Column(Text)
+    # 递补/放弃/取消的审计信息
+    promotion_id = Column(Integer, ForeignKey("waitlist_promotions.id"))
+    promotion_seq = Column(Integer)
+    promoted_at = Column(DateTime)
+    declined_at = Column(DateTime)
+    decline_reason = Column(Text)
+    cancelled_at = Column(DateTime)
+    cancel_reason = Column(Text)
+    registered_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    batch = relationship("TrainingBatch", back_populates="waitlist_entries")
+    volunteer = relationship("Volunteer", back_populates="waitlist_entries")
+    promotion = relationship("WaitlistPromotion", back_populates="entries", foreign_keys=[promotion_id])
+
+
+class WaitlistPromotion(Base):
+    """一轮名额释放后的一次性递补记录（多人同时退班也只产生一轮）。"""
+    __tablename__ = "waitlist_promotions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("training_batches.id"), nullable=False)
+    trigger = Column(SAEnum(PromotionTrigger), nullable=False)
+    # 本轮触发前在班人数、释放/新增的名额数、本轮可用空位
+    seats_before = Column(Integer, nullable=False)
+    seats_released = Column(Integer, nullable=False, default=0)
+    seats_available = Column(Integer, nullable=False)
+    promoted_count = Column(Integer, nullable=False, default=0)
+    detail = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    batch = relationship("TrainingBatch", back_populates="promotions")
+    entries = relationship("WaitlistEntry", back_populates="promotion", foreign_keys="WaitlistEntry.promotion_id")
 
 
 class SessionAttendance(Base):
